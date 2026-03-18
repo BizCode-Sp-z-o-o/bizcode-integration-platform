@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ============================================================
+# BizCode Integration Platform — Interactive Installer
+# ============================================================
+
+BOLD="\033[1m"
+BLUE="\033[0;34m"
+GREEN="\033[0;32m"
+YELLOW="\033[1;33m"
+RED="\033[0;31m"
+NC="\033[0m"
+
+header() { echo -e "\n${BLUE}${BOLD}$1${NC}"; }
+info()   { echo -e "${GREEN}[OK]${NC} $1"; }
+warn()   { echo -e "${YELLOW}[!]${NC} $1"; }
+error()  { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+ask() {
+    local var=$1 prompt=$2 default=$3
+    if [ -n "$default" ]; then
+        read -rp "$(echo -e "${BOLD}$prompt${NC} [$default]: ")" input
+        eval "$var=\"${input:-$default}\""
+    else
+        while true; do
+            read -rp "$(echo -e "${BOLD}$prompt${NC}: ")" input
+            [ -n "$input" ] && break
+            echo -e "${RED}  This field is required.${NC}"
+        done
+        eval "$var=\"$input\""
+    fi
+}
+
+ask_yn() {
+    local var=$1 prompt=$2 default=$3
+    while true; do
+        read -rp "$(echo -e "${BOLD}$prompt${NC} [${default}]: ")" input
+        input="${input:-$default}"
+        case "$input" in
+            [Yy]*) eval "$var=true"; return ;;
+            [Nn]*) eval "$var=false"; return ;;
+            *) echo "  Please answer y or n." ;;
+        esac
+    done
+}
+
+ask_password() {
+    local var=$1 prompt=$2 default=$3
+    read -rsp "$(echo -e "${BOLD}$prompt${NC} [$default]: ")" input
+    echo
+    eval "$var=\"${input:-$default}\""
+}
+
+# ── Banner ──
+echo -e "${BLUE}${BOLD}"
+cat << 'BANNER'
+
+  ____  _     ____          _
+ | __ )(_)___/ ___|___   __| | ___
+ |  _ \| |_  / |   / _ \ / _` |/ _ \
+ | |_) | |/ /| |__| (_) | (_| |  __/
+ |____/|_/___|\____\___/ \__,_|\___|
+
+  Integration Platform Installer
+
+BANNER
+echo -e "${NC}"
+
+# ── Prerequisites ──
+header "Checking prerequisites..."
+command -v docker >/dev/null 2>&1 || error "Docker is not installed. Please install Docker first: https://docs.docker.com/engine/install/"
+command -v docker compose version >/dev/null 2>&1 || docker compose version >/dev/null 2>&1 || error "Docker Compose v2 is not available."
+info "Docker $(docker --version | grep -oP '\d+\.\d+\.\d+')"
+info "Docker Compose $(docker compose version --short 2>/dev/null)"
+
+# ── Deployment mode ──
+header "Deployment mode"
+echo "  1) dev  — direct port access (1880-1889), no SSL, for development/testing"
+echo "  2) prod — Nginx Proxy Manager with SSL, domain-based routing"
+echo ""
+ask MODE "Choose mode (1=dev, 2=prod)" "1"
+case "$MODE" in
+    1|dev)  MODE="dev" ;;
+    2|prod) MODE="prod" ;;
+    *) error "Invalid mode" ;;
+esac
+info "Mode: $MODE"
+
+# ── ACR Credentials ──
+header "Azure Container Registry credentials"
+echo "  These are provided by BizCode with your license."
+ask ACR_USERNAME "ACR Username" ""
+ask_password ACR_PASSWORD "ACR Password" ""
+
+echo ""
+echo -e "  Logging in to ACR..."
+echo "$ACR_PASSWORD" | docker login bizcode.azurecr.io -u "$ACR_USERNAME" --password-stdin >/dev/null 2>&1 \
+    || error "ACR login failed. Please check your credentials."
+info "ACR login successful"
+
+# ── Node-RED Admin ──
+header "Node-RED admin credentials"
+ask NR_ADMIN_USER "Admin username" "admin"
+ask_password NR_ADMIN_PASS "Admin password" "bizcode2025!"
+
+# ── Instances ──
+header "BIP instances"
+ask BIP_COUNT "How many instances? (1-10)" "10"
+[[ "$BIP_COUNT" =~ ^[0-9]+$ ]] && [ "$BIP_COUNT" -ge 1 ] && [ "$BIP_COUNT" -le 10 ] || error "Must be between 1 and 10"
+info "$BIP_COUNT instances (bip-00 to bip-$(printf '%02d' $((BIP_COUNT - 1))))"
+
+# ── Infrastructure services ──
+header "Infrastructure services"
+ask_yn ENABLE_REDIS    "Enable Redis?          (cache, pub/sub)" "y"
+ask_yn ENABLE_RABBITMQ "Enable RabbitMQ?       (message queue)" "y"
+ask_yn ENABLE_POSTGRES "Enable PostgreSQL?     (database)" "y"
+ask_yn ENABLE_CUPS     "Enable CUPS?           (print server)" "y"
+
+REDIS_PASSWORD="bizcode-redis-$(openssl rand -hex 4)"
+RABBITMQ_USER="bizcode"
+RABBITMQ_PASS="bizcode-rmq-$(openssl rand -hex 4)"
+POSTGRES_USER="bizcode"
+POSTGRES_PASS="bizcode-pg-$(openssl rand -hex 4)"
+POSTGRES_DB="bizcode"
+CUPS_ADMIN_PASS="bizcode-cups-$(openssl rand -hex 4)"
+
+# ── Prod-specific ──
+BASE_DOMAIN=""
+LETSENCRYPT_EMAIL=""
+NPM_DB_PASSWORD="bizcode-npm-$(openssl rand -hex 4)"
+
+if [ "$MODE" = "prod" ]; then
+    header "Production settings"
+    ask BASE_DOMAIN "Base domain (e.g. integrations.klient.pl)" ""
+    ask LETSENCRYPT_EMAIL "Email for Let's Encrypt" ""
+fi
+
+# ── Extra hosts ──
+header "Extra hosts (SAP server resolution)"
+echo "  Add hostname:IP pairs for SAP servers accessible via NetBIOS."
+echo "  Leave empty to skip, or enter comma-separated pairs."
+echo "  Example: sapserver:192.168.1.100,sapdb:192.168.1.101"
+ask EXTRA_HOSTS "Extra hosts" ""
+
+# ── Generate .env ──
+header "Generating configuration..."
+
+cat > .env << ENVFILE
+# Generated by install.sh on $(date -Iseconds)
+# BizCode Integration Platform
+
+ACR_USERNAME=${ACR_USERNAME}
+ACR_PASSWORD=${ACR_PASSWORD}
+
+NR_ADMIN_USER=${NR_ADMIN_USER}
+NR_ADMIN_PASS=${NR_ADMIN_PASS}
+
+BIP_INSTANCE_COUNT=${BIP_COUNT}
+
+ENABLE_REDIS=${ENABLE_REDIS}
+ENABLE_RABBITMQ=${ENABLE_RABBITMQ}
+ENABLE_POSTGRES=${ENABLE_POSTGRES}
+ENABLE_CUPS=${ENABLE_CUPS}
+
+REDIS_PASSWORD=${REDIS_PASSWORD}
+
+RABBITMQ_USER=${RABBITMQ_USER}
+RABBITMQ_PASS=${RABBITMQ_PASS}
+
+POSTGRES_USER=${POSTGRES_USER}
+POSTGRES_PASS=${POSTGRES_PASS}
+POSTGRES_DB=${POSTGRES_DB}
+
+CUPS_ADMIN_PASS=${CUPS_ADMIN_PASS}
+
+BASE_DOMAIN=${BASE_DOMAIN}
+LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+NPM_DB_PASSWORD=${NPM_DB_PASSWORD}
+
+EXTRA_HOSTS=${EXTRA_HOSTS}
+ENVFILE
+
+info ".env generated"
+
+# ── Generate docker-compose.override.yml for instance count and extra_hosts ──
+header "Generating docker-compose.override.yml..."
+
+cat > docker-compose.override.yml << 'HEADER'
+# Auto-generated by install.sh — instance and extra_hosts overrides
+services:
+HEADER
+
+# Build extra_hosts YAML block
+EXTRA_HOSTS_YAML=""
+if [ -n "$EXTRA_HOSTS" ]; then
+    EXTRA_HOSTS_YAML="    extra_hosts:"
+    IFS=',' read -ra PAIRS <<< "$EXTRA_HOSTS"
+    for pair in "${PAIRS[@]}"; do
+        host=$(echo "$pair" | cut -d: -f1 | xargs)
+        ip=$(echo "$pair" | cut -d: -f2 | xargs)
+        EXTRA_HOSTS_YAML="${EXTRA_HOSTS_YAML}
+      - \"${host}:${ip}\""
+    done
+fi
+
+for i in $(seq 0 9); do
+    idx=$(printf '%02d' $i)
+    if [ $i -lt "$BIP_COUNT" ]; then
+        # Active instance
+        if [ -n "$EXTRA_HOSTS_YAML" ]; then
+            cat >> docker-compose.override.yml << EOF
+  bip-${idx}:
+${EXTRA_HOSTS_YAML}
+EOF
+        fi
+    else
+        # Disabled instance
+        cat >> docker-compose.override.yml << EOF
+  bip-${idx}:
+    profiles:
+      - disabled
+EOF
+    fi
+done
+
+info "docker-compose.override.yml generated (${BIP_COUNT} active instances)"
+
+# ── Build compose profiles ──
+PROFILES=""
+[ "$ENABLE_REDIS" = "true" ] && PROFILES="$PROFILES --profile redis"
+[ "$ENABLE_RABBITMQ" = "true" ] && PROFILES="$PROFILES --profile rabbitmq"
+[ "$ENABLE_POSTGRES" = "true" ] && PROFILES="$PROFILES --profile postgres"
+[ "$ENABLE_CUPS" = "true" ] && PROFILES="$PROFILES --profile cups"
+
+# Save profiles for future use
+echo "$PROFILES" > .profiles
+info "Compose profiles: ${PROFILES:-none}"
+
+# ── Pull images ──
+header "Pulling images..."
+COMPOSE_CMD="docker compose"
+if [ "$MODE" = "prod" ]; then
+    COMPOSE_CMD="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+fi
+
+$COMPOSE_CMD $PROFILES pull 2>&1 | tail -5
+info "Images pulled"
+
+# ── Start ──
+header "Starting BizCode Integration Platform..."
+$COMPOSE_CMD $PROFILES up -d 2>&1 | tail -10
+
+# ── Summary ──
+header "Installation complete!"
+echo ""
+echo -e "${BOLD}Access your instances:${NC}"
+
+if [ "$MODE" = "dev" ]; then
+    for i in $(seq 0 $((BIP_COUNT - 1))); do
+        idx=$(printf '%02d' $i)
+        port=$((1880 + i))
+        echo -e "  bip-${idx}:  ${GREEN}http://localhost:${port}${NC}"
+    done
+else
+    echo -e "  Nginx Proxy Manager:  ${GREEN}http://localhost:81${NC}"
+    echo -e "  Default NPM login:    admin@example.com / changeme"
+    echo ""
+    echo "  Configure proxy hosts in NPM for each instance:"
+    for i in $(seq 0 $((BIP_COUNT - 1))); do
+        idx=$(printf '%02d' $i)
+        echo -e "    ${BASE_DOMAIN}/bip-${idx}  →  bip-${idx}:1880"
+    done
+fi
+
+echo ""
+echo -e "${BOLD}Infrastructure:${NC}"
+[ "$ENABLE_REDIS" = "true" ]    && echo -e "  Redis:     ${GREEN}bip-redis:6379${NC}    password: ${REDIS_PASSWORD}"
+[ "$ENABLE_RABBITMQ" = "true" ] && echo -e "  RabbitMQ:  ${GREEN}bip-rabbitmq:5672${NC} user: ${RABBITMQ_USER}  mgmt: http://localhost:15672"
+[ "$ENABLE_POSTGRES" = "true" ] && echo -e "  PostgreSQL:${GREEN} bip-postgres:5432${NC} user: ${POSTGRES_USER}  db: ${POSTGRES_DB}"
+[ "$ENABLE_CUPS" = "true" ]     && echo -e "  CUPS:      ${GREEN}http://localhost:631${NC}  admin: admin/${CUPS_ADMIN_PASS}"
+
+echo ""
+echo -e "${BOLD}Node-RED login:${NC} ${NR_ADMIN_USER} / ${NR_ADMIN_PASS}"
+echo ""
+echo -e "${BOLD}Management:${NC}"
+echo "  Start:   ./ctl.sh start"
+echo "  Stop:    ./ctl.sh stop"
+echo "  Status:  ./ctl.sh status"
+echo "  Logs:    ./ctl.sh logs bip-00"
+echo "  Update:  ./ctl.sh update"
+echo ""
+echo -e "${GREEN}${BOLD}BizCode Integration Platform is ready!${NC}"

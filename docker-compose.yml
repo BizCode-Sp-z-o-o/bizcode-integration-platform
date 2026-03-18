@@ -1,0 +1,190 @@
+# ============================================================
+# BizCode Integration Platform — Development / Local
+# No SSL, direct port access: bip-00=1880, bip-01=1881, ...
+# ============================================================
+
+x-nodered-common: &nodered-common
+  image: bizcode.azurecr.io/integration-platform:latest
+  restart: unless-stopped
+  environment:
+    - TZ=Europe/Warsaw
+    - NR_ADMIN_USER=${NR_ADMIN_USER:-admin}
+    - NR_ADMIN_PASS=${NR_ADMIN_PASS:-changeme!}
+  networks:
+    - bip
+
+x-extra-hosts: &extra-hosts
+  extra_hosts: []
+
+services:
+  # ── Node-RED Instances ──
+  bip-00:
+    <<: *nodered-common
+    container_name: bip-00
+    ports:
+      - "1880:1880"
+    volumes:
+      - bip-00-data:/data
+
+  bip-01:
+    <<: *nodered-common
+    container_name: bip-01
+    ports:
+      - "1881:1880"
+    volumes:
+      - bip-01-data:/data
+
+  bip-02:
+    <<: *nodered-common
+    container_name: bip-02
+    ports:
+      - "1882:1880"
+    volumes:
+      - bip-02-data:/data
+
+  bip-03:
+    <<: *nodered-common
+    container_name: bip-03
+    ports:
+      - "1883:1880"
+    volumes:
+      - bip-03-data:/data
+
+  bip-04:
+    <<: *nodered-common
+    container_name: bip-04
+    ports:
+      - "1884:1880"
+    volumes:
+      - bip-04-data:/data
+
+  bip-05:
+    <<: *nodered-common
+    container_name: bip-05
+    ports:
+      - "1885:1880"
+    volumes:
+      - bip-05-data:/data
+
+  bip-06:
+    <<: *nodered-common
+    container_name: bip-06
+    ports:
+      - "1886:1880"
+    volumes:
+      - bip-06-data:/data
+
+  bip-07:
+    <<: *nodered-common
+    container_name: bip-07
+    ports:
+      - "1887:1880"
+    volumes:
+      - bip-07-data:/data
+
+  bip-08:
+    <<: *nodered-common
+    container_name: bip-08
+    ports:
+      - "1888:1880"
+    volumes:
+      - bip-08-data:/data
+
+  bip-09:
+    <<: *nodered-common
+    container_name: bip-09
+    ports:
+      - "1889:1880"
+    volumes:
+      - bip-09-data:/data
+
+  # ── Redis ──
+  redis:
+    image: redis:7-alpine
+    container_name: bip-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-bizcode-redis-2025}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - bip
+    profiles:
+      - redis
+      - full
+
+  # ── RabbitMQ ──
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: bip-rabbitmq
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-bizcode}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS:-bizcode-rmq-2025}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - bip
+    profiles:
+      - rabbitmq
+      - full
+
+  # ── PostgreSQL ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: bip-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-bizcode}
+      - POSTGRES_PASSWORD=${POSTGRES_PASS:-bizcode-pg-2025}
+      - POSTGRES_DB=${POSTGRES_DB:-bizcode}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - bip
+    profiles:
+      - postgres
+      - full
+
+  # ── CUPS Print Server ──
+  cups:
+    image: ydkn/cups
+    container_name: bip-cups
+    restart: unless-stopped
+    environment:
+      - ADMIN_PASSWORD=${CUPS_ADMIN_PASS:-bizcode-cups-2025}
+    ports:
+      - "631:631"
+    volumes:
+      - cups-data:/etc/cups
+    networks:
+      - bip
+    profiles:
+      - cups
+      - full
+
+volumes:
+  bip-00-data:
+  bip-01-data:
+  bip-02-data:
+  bip-03-data:
+  bip-04-data:
+  bip-05-data:
+  bip-06-data:
+  bip-07-data:
+  bip-08-data:
+  bip-09-data:
+  redis-data:
+  rabbitmq-data:
+  postgres-data:
+  cups-data:
+
+networks:
+  bip:
+    name: bip-network

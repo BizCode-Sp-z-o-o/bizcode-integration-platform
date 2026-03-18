@@ -1,0 +1,49 @@
+# ============================================================
+# BizCode Integration Platform — Production
+# SSL via Nginx Proxy Manager, no direct port exposure
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# ============================================================
+
+services:
+  # ── Override: remove port mappings, add NPM labels ──
+  bip-00:
+    ports: !override []
+  bip-01:
+    ports: !override []
+  bip-02:
+    ports: !override []
+  bip-03:
+    ports: !override []
+  bip-04:
+    ports: !override []
+  bip-05:
+    ports: !override []
+  bip-06:
+    ports: !override []
+  bip-07:
+    ports: !override []
+  bip-08:
+    ports: !override []
+  bip-09:
+    ports: !override []
+
+  # ── Nginx Proxy Manager ──
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: bip-npm
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    environment:
+      - DB_SQLITE_FILE=/data/database.sqlite
+    volumes:
+      - npm-data:/data
+      - npm-letsencrypt:/etc/letsencrypt
+    networks:
+      - bip
+
+volumes:
+  npm-data:
+  npm-letsencrypt:
