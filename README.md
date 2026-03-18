@@ -2,6 +2,15 @@
 
 Self-hosted integration platform for SAP Business One based on Node-RED.
 
+> [!IMPORTANT]
+> **This is an installer only, not open-source software.**
+> The container images are proprietary and require a commercial license from BizCode.
+> This repository contains only the deployment scripts (Docker Compose, installer, control script).
+>
+> **Interested?** Contact us at **info@bizcode.pl** to discuss licensing and pricing.
+>
+> [www.bizcode.pl](https://www.bizcode.pl)
+
 ## Quick Start
 
 ```bash
@@ -49,3 +58,6 @@ The installer will guide you through configuration and start all services.
 ## License
 
 Proprietary — BizCode Sp. z o.o. All rights reserved.
+
+This software is not open-source. Unauthorized use, copying, or distribution is prohibited.
+Contact **info@bizcode.pl** for licensing.
