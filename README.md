@@ -5,7 +5,7 @@ Self-hosted integration platform for SAP Business One based on Node-RED.
 > [!IMPORTANT]
 > **This is an installer only, not open-source software.**
 > The container images are proprietary and require a commercial license from BizCode.
-> This repository contains only the deployment scripts (Docker Compose, installer, control script).
+> This repository contains only the deployment scripts.
 >
 > **Interested?** Contact us at **info@bizcode.pl** to discuss licensing and pricing.
 >
@@ -21,17 +21,13 @@ chmod +x install.sh ctl.sh
 ```
 
 The installer will guide you through configuration and start all services.
+You will need ACR credentials provided by BizCode with your license.
 
-## Architecture
+## Requirements
 
-| Service | Description | Dev Port |
-|---------|-------------|----------|
-| bip-00 to bip-09 | Node-RED instances | 1880-1889 |
-| Redis | Cache and pub/sub | 6379 |
-| RabbitMQ | Message queue | 5672 (mgmt: 15672) |
-| PostgreSQL | Database | 5432 |
-| CUPS | Print server | 631 |
-| Nginx Proxy Manager | Reverse proxy (prod) | 80/443 (admin: 81) |
+- Docker Engine 24+
+- Docker Compose v2
+- ACR credentials (provided by BizCode)
 
 ## Management
 
@@ -41,19 +37,8 @@ The installer will guide you through configuration and start all services.
 ./ctl.sh status   # Show status
 ./ctl.sh logs     # View logs
 ./ctl.sh update   # Pull latest images and restart
-./ctl.sh backup   # Backup all Node-RED data
+./ctl.sh backup   # Backup all data
 ```
-
-## Deployment Modes
-
-- **Dev** — direct port access (1880-1889), no SSL
-- **Prod** — Nginx Proxy Manager with SSL and domain routing
-
-## Requirements
-
-- Docker Engine 24+
-- Docker Compose v2
-- ACR credentials (provided by BizCode)
 
 ## License
 
