@@ -52,6 +52,16 @@ ask_password() {
     eval "$var=\"${input:-$default}\""
 }
 
+# Check if a port is available
+check_port() {
+    local port=$1
+    if (echo >/dev/tcp/127.0.0.1/$port) 2>/dev/null; then
+        return 1  # port is in use
+    else
+        return 0  # port is free
+    fi
+}
+
 # ── Banner ──
 echo -e "${BLUE}${BOLD}"
 cat << 'BANNER'
@@ -70,8 +80,10 @@ echo -e "${NC}"
 # ── Prerequisites ──
 header "Checking prerequisites..."
 command -v docker >/dev/null 2>&1 || error "Docker is not installed. Please install Docker first: https://docs.docker.com/engine/install/"
-command -v docker compose version >/dev/null 2>&1 || docker compose version >/dev/null 2>&1 || error "Docker Compose v2 is not available."
-info "Docker $(docker --version | grep -oP '\d+\.\d+\.\d+')"
+docker compose version >/dev/null 2>&1 || error "Docker Compose v2 is not available."
+
+DOCKER_VERSION=$(docker --version | sed -n 's/.*version \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p')
+info "Docker ${DOCKER_VERSION:-unknown}"
 info "Docker Compose $(docker compose version --short 2>/dev/null)"
 
 # ── Deployment mode ──
@@ -143,6 +155,63 @@ echo "  Leave empty to skip, or enter comma-separated pairs."
 echo "  Example: sapserver:192.168.1.100,sapdb:192.168.1.101"
 ask EXTRA_HOSTS "Extra hosts" ""
 
+# ── Check port availability ──
+header "Checking port availability..."
+PORTS_IN_USE=()
+
+if [ "$MODE" = "dev" ]; then
+    for i in $(seq 0 $((BIP_COUNT - 1))); do
+        port=$((1880 + i))
+        if ! check_port $port; then
+            PORTS_IN_USE+=("$port (bip-$(printf '%02d' $i))")
+        fi
+    done
+fi
+
+if [ "$MODE" = "prod" ]; then
+    for port in 80 443 81; do
+        if ! check_port $port; then
+            PORTS_IN_USE+=("$port (Nginx Proxy Manager)")
+        fi
+    done
+fi
+
+if [ "$ENABLE_REDIS" = "true" ] && ! check_port 6379; then
+    PORTS_IN_USE+=("6379 (Redis)")
+fi
+if [ "$ENABLE_RABBITMQ" = "true" ]; then
+    ! check_port 5672 && PORTS_IN_USE+=("5672 (RabbitMQ)")
+    ! check_port 15672 && PORTS_IN_USE+=("15672 (RabbitMQ Management)")
+fi
+if [ "$ENABLE_POSTGRES" = "true" ] && ! check_port 5432; then
+    PORTS_IN_USE+=("5432 (PostgreSQL)")
+fi
+if [ "$ENABLE_CUPS" = "true" ] && ! check_port 631; then
+    PORTS_IN_USE+=("631 (CUPS)")
+fi
+
+if [ ${#PORTS_IN_USE[@]} -gt 0 ]; then
+    warn "The following ports are already in use:"
+    for p in "${PORTS_IN_USE[@]}"; do
+        echo -e "    ${RED}$p${NC}"
+    done
+    echo ""
+    echo "  Options:"
+    echo "    1) Stop the conflicting services and re-run ./install.sh"
+    echo "    2) Continue anyway (containers using these ports will fail to start)"
+    echo "    3) Abort installation"
+    echo ""
+    ask PORT_ACTION "Choose (1/2/3)" "3"
+    case "$PORT_ACTION" in
+        1) error "Please stop the conflicting services and re-run ./install.sh" ;;
+        2) warn "Continuing with port conflicts — some containers may not start" ;;
+        3) error "Installation aborted" ;;
+        *) error "Invalid choice" ;;
+    esac
+else
+    info "All required ports are available"
+fi
+
 # ── Generate .env ──
 header "Generating configuration..."
 
@@ -152,6 +221,8 @@ cat > .env << ENVFILE
 
 ACR_USERNAME=${ACR_USERNAME}
 ACR_PASSWORD=${ACR_PASSWORD}
+
+MODE=${MODE}
 
 NR_ADMIN_USER=${NR_ADMIN_USER}
 NR_ADMIN_PASS=${NR_ADMIN_PASS}
@@ -249,7 +320,34 @@ info "Images pulled"
 
 # ── Start ──
 header "Starting BizCode Integration Platform..."
-$COMPOSE_CMD $PROFILES up -d 2>&1 | tail -10
+if ! $COMPOSE_CMD $PROFILES up -d 2>&1; then
+    echo ""
+    warn "Some containers may have failed to start. Check status with: ./ctl.sh status"
+fi
+
+# ── Verify ──
+header "Verifying services..."
+sleep 3
+FAILED=0
+RUNNING=0
+while IFS= read -r line; do
+    name=$(echo "$line" | awk '{print $1}')
+    state=$(echo "$line" | awk '{print $2}')
+    if [ "$state" = "running" ]; then
+        info "$name is running"
+        RUNNING=$((RUNNING + 1))
+    else
+        warn "$name is $state"
+        FAILED=$((FAILED + 1))
+    fi
+done < <($COMPOSE_CMD $PROFILES ps --format '{{.Name}} {{.State}}' 2>/dev/null)
+
+echo ""
+if [ "$FAILED" -gt 0 ]; then
+    warn "$RUNNING running, $FAILED failed. Check: ./ctl.sh logs <service-name>"
+else
+    info "All $RUNNING services running"
+fi
 
 # ── Summary ──
 header "Installation complete!"
@@ -275,10 +373,10 @@ fi
 
 echo ""
 echo -e "${BOLD}Infrastructure:${NC}"
-[ "$ENABLE_REDIS" = "true" ]    && echo -e "  Redis:     ${GREEN}bip-redis:6379${NC}    password: ${REDIS_PASSWORD}"
-[ "$ENABLE_RABBITMQ" = "true" ] && echo -e "  RabbitMQ:  ${GREEN}bip-rabbitmq:5672${NC} user: ${RABBITMQ_USER}  mgmt: http://localhost:15672"
-[ "$ENABLE_POSTGRES" = "true" ] && echo -e "  PostgreSQL:${GREEN} bip-postgres:5432${NC} user: ${POSTGRES_USER}  db: ${POSTGRES_DB}"
-[ "$ENABLE_CUPS" = "true" ]     && echo -e "  CUPS:      ${GREEN}http://localhost:631${NC}  admin: admin/${CUPS_ADMIN_PASS}"
+[ "$ENABLE_REDIS" = "true" ]    && echo -e "  Redis:      ${GREEN}bip-redis:6379${NC}      password: ${REDIS_PASSWORD}"
+[ "$ENABLE_RABBITMQ" = "true" ] && echo -e "  RabbitMQ:   ${GREEN}bip-rabbitmq:5672${NC}   user: ${RABBITMQ_USER}  mgmt: http://localhost:15672"
+[ "$ENABLE_POSTGRES" = "true" ] && echo -e "  PostgreSQL: ${GREEN}bip-postgres:5432${NC}   user: ${POSTGRES_USER}  db: ${POSTGRES_DB}"
+[ "$ENABLE_CUPS" = "true" ]     && echo -e "  CUPS:       ${GREEN}http://localhost:631${NC} admin: admin/${CUPS_ADMIN_PASS}"
 
 echo ""
 echo -e "${BOLD}Node-RED login:${NC} ${NR_ADMIN_USER} / ${NR_ADMIN_PASS}"
@@ -289,5 +387,8 @@ echo "  Stop:    ./ctl.sh stop"
 echo "  Status:  ./ctl.sh status"
 echo "  Logs:    ./ctl.sh logs bip-00"
 echo "  Update:  ./ctl.sh update"
+echo ""
+echo -e "${BOLD}Credentials saved in:${NC} .env"
+echo -e "${YELLOW}Keep this file safe — it contains all passwords.${NC}"
 echo ""
 echo -e "${GREEN}${BOLD}BizCode Integration Platform is ready!${NC}"
