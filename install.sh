@@ -77,10 +77,99 @@ cat << 'BANNER'
 BANNER
 echo -e "${NC}"
 
+# ── Install Docker if missing ──
+install_docker() {
+    header "Installing Docker..."
+
+    # Detect distro
+    if [ ! -f /etc/os-release ]; then
+        error "Cannot detect OS. Only Ubuntu and Debian are supported."
+    fi
+    . /etc/os-release
+    case "$ID" in
+        ubuntu|debian) ;;
+        *) error "Unsupported distro: $ID. Only Ubuntu and Debian are supported." ;;
+    esac
+    info "Detected: $PRETTY_NAME"
+
+    # Check root/sudo
+    if [ "$(id -u)" -ne 0 ]; then
+        SUDO="sudo"
+        command -v sudo >/dev/null 2>&1 || error "sudo is required to install Docker. Run as root or install sudo."
+    else
+        SUDO=""
+    fi
+
+    # Install prerequisites
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y -qq ca-certificates curl gnupg >/dev/null
+
+    # Add Docker GPG key
+    $SUDO install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL "https://download.docker.com/linux/${ID}/gpg" | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    $SUDO chmod a+r /etc/apt/keyrings/docker.gpg
+
+    # Add Docker repository
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${ID} \
+      ${VERSION_CODENAME} stable" | $SUDO tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # Install Docker
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
+    info "Docker installed"
+
+    # Post-install: enable and start
+    $SUDO systemctl enable docker.service >/dev/null 2>&1
+    $SUDO systemctl enable containerd.service >/dev/null 2>&1
+    $SUDO systemctl start docker.service
+    info "Docker service enabled and started"
+
+    # Post-install: non-root user
+    if [ -n "${SUDO_USER:-}" ]; then
+        DOCKER_USER="$SUDO_USER"
+    elif [ "$(id -u)" -ne 0 ]; then
+        DOCKER_USER="$(whoami)"
+    else
+        DOCKER_USER=""
+    fi
+    if [ -n "$DOCKER_USER" ]; then
+        $SUDO groupadd -f docker
+        $SUDO usermod -aG docker "$DOCKER_USER"
+        info "User '$DOCKER_USER' added to docker group (re-login required for non-sudo usage)"
+    fi
+
+    # Post-install: log rotation
+    if [ ! -f /etc/docker/daemon.json ]; then
+        $SUDO mkdir -p /etc/docker
+        $SUDO tee /etc/docker/daemon.json > /dev/null << 'DAEMON'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+DAEMON
+        $SUDO systemctl restart docker.service
+        info "Log rotation configured (json-file, 10m x 3)"
+    else
+        warn "/etc/docker/daemon.json already exists — skipping log config"
+    fi
+}
+
 # ── Prerequisites ──
 header "Checking prerequisites..."
-command -v docker >/dev/null 2>&1 || error "Docker is not installed. Please install Docker first: https://docs.docker.com/engine/install/"
-docker compose version >/dev/null 2>&1 || error "Docker Compose v2 is not available."
+if ! command -v docker >/dev/null 2>&1; then
+    warn "Docker is not installed."
+    ask_yn INSTALL_DOCKER "Install Docker automatically?" "y"
+    if [ "$INSTALL_DOCKER" = "true" ]; then
+        install_docker
+    else
+        error "Docker is required. Install manually: https://docs.docker.com/engine/install/"
+    fi
+fi
+docker compose version >/dev/null 2>&1 || error "Docker Compose v2 is not available. Reinstall Docker with compose plugin."
 
 DOCKER_VERSION=$(docker --version | sed -n 's/.*version \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p')
 info "Docker ${DOCKER_VERSION:-unknown}"
