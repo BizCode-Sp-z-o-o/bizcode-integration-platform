@@ -11,7 +11,25 @@ Self-hosted integration platform for SAP Business One based on Node-RED.
 >
 > [www.bizcode.pl](https://www.bizcode.pl)
 
-## Quick Start
+## Single Container (dev / testing)
+
+For a quick single instance — no Compose, no installer:
+
+```bash
+docker login bizcode.azurecr.io -u YOUR_USER -p YOUR_PASS
+
+docker run -d -p 1880:1880 \
+  -e NR_ADMIN_USER=admin \
+  -e NR_ADMIN_PASS=changeme \
+  -v bip-data:/data \
+  bizcode.azurecr.io/integration-platform:latest
+```
+
+Open http://localhost:1880 — branding, auth, and all preinstalled nodes work out of the box.
+
+## Full Stack (production)
+
+For multi-instance deployment with Redis, RabbitMQ, PostgreSQL, CUPS, and Nginx Proxy Manager:
 
 ```bash
 git clone https://github.com/BizCode-Sp-z-o-o/bizcode-integration-platform.git
@@ -20,7 +38,7 @@ chmod +x install.sh ctl.sh
 ./install.sh
 ```
 
-The installer will guide you through configuration and start all services.
+The interactive installer will guide you through configuration and start all services.
 You will need ACR credentials provided by BizCode with your license.
 
 ## Requirements
