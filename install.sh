@@ -242,7 +242,13 @@ header "Extra hosts (SAP server resolution)"
 echo "  Add hostname:IP pairs for SAP servers accessible via NetBIOS."
 echo "  Leave empty to skip, or enter comma-separated pairs."
 echo "  Example: sapserver:192.168.1.100,sapdb:192.168.1.101"
-ask EXTRA_HOSTS "Extra hosts" ""
+read -rp "$(echo -e "${BOLD}Extra hosts${NC} [none]: ")" EXTRA_HOSTS
+EXTRA_HOSTS="${EXTRA_HOSTS:-}"
+if [ -n "$EXTRA_HOSTS" ]; then
+    info "Extra hosts: $EXTRA_HOSTS"
+else
+    info "No extra hosts configured"
+fi
 
 # ── Check port availability ──
 header "Checking port availability..."
@@ -375,11 +381,11 @@ ${EXTRA_HOSTS_YAML}
 EOF
         fi
     else
-        # Disabled instance
+        # Disabled instance — scale to 0
         cat >> docker-compose.override.yml << EOF
   bip-${idx}:
-    profiles:
-      - disabled
+    deploy:
+      replicas: 0
 EOF
     fi
 done
@@ -438,6 +444,64 @@ else
     info "All $RUNNING services running"
 fi
 
+# ── Auto-configure NPM proxy hosts (prod mode) ──
+if [ "$MODE" = "prod" ]; then
+    header "Configuring Nginx Proxy Manager..."
+
+    # Wait for NPM API to be ready
+    NPM_READY=false
+    for i in $(seq 1 30); do
+        if curl -sf http://localhost:81/api/ >/dev/null 2>&1; then
+            NPM_READY=true
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$NPM_READY" = "true" ]; then
+        # Login with default credentials (first run)
+        NPM_TOKEN=$(curl -sf http://localhost:81/api/tokens \
+            -H "Content-Type: application/json" \
+            -d '{"identity":"admin@example.com","secret":"changeme"}' \
+            | grep -o '"token":"[^"]*"' | sed 's/"token":"//;s/"//')
+
+        if [ -n "$NPM_TOKEN" ]; then
+            info "NPM API authenticated"
+
+            NPM_CONFIGURED=0
+            for i in $(seq 0 $((BIP_COUNT - 1))); do
+                idx=$(printf '%02d' $i)
+                RESULT=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:81/api/nginx/proxy-hosts \
+                    -H "Content-Type: application/json" \
+                    -H "Authorization: Bearer $NPM_TOKEN" \
+                    -d "{
+                        \"domain_names\": [\"bip-${idx}.${BASE_DOMAIN}\"],
+                        \"forward_scheme\": \"http\",
+                        \"forward_host\": \"bip-${idx}\",
+                        \"forward_port\": 1880,
+                        \"block_exploits\": true,
+                        \"allow_websocket_upgrade\": true,
+                        \"ssl_forced\": false,
+                        \"http2_support\": false,
+                        \"meta\": {\"dns_challenge\": false}
+                    }")
+                if [ "$RESULT" = "201" ]; then
+                    NPM_CONFIGURED=$((NPM_CONFIGURED + 1))
+                else
+                    warn "Failed to configure proxy for bip-${idx} (HTTP $RESULT)"
+                fi
+            done
+            info "$NPM_CONFIGURED proxy hosts configured"
+            echo ""
+            warn "Change the NPM admin password at http://localhost:81 !"
+        else
+            warn "Could not authenticate with NPM API — configure proxy hosts manually"
+        fi
+    else
+        warn "NPM API not ready after 60s — configure proxy hosts manually at http://localhost:81"
+    fi
+fi
+
 # ── Summary ──
 header "Installation complete!"
 echo ""
@@ -451,13 +515,13 @@ if [ "$MODE" = "dev" ]; then
     done
 else
     echo -e "  Nginx Proxy Manager:  ${GREEN}http://localhost:81${NC}"
-    echo -e "  Default NPM login:    admin@example.com / changeme"
     echo ""
-    echo "  Configure proxy hosts in NPM for each instance:"
     for i in $(seq 0 $((BIP_COUNT - 1))); do
         idx=$(printf '%02d' $i)
-        echo -e "    ${BASE_DOMAIN}/bip-${idx}  →  bip-${idx}:1880"
+        echo -e "  bip-${idx}:  ${GREEN}https://bip-${idx}.${BASE_DOMAIN}${NC}"
     done
+    echo ""
+    echo -e "  ${YELLOW}Add SSL certificates in NPM for each host to enable HTTPS${NC}"
 fi
 
 echo ""
