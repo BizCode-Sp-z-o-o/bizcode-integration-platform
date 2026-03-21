@@ -607,10 +607,10 @@ if [ "$MODE" = "prod" ]; then
 
     if [ "$NPM_READY" = "true" ]; then
         # Login with default credentials (first run)
-        NPM_TOKEN=$(curl -sf http://localhost:81/api/tokens \
+        NPM_RESPONSE=$(curl -s http://localhost:81/api/tokens \
             -H "Content-Type: application/json" \
-            -d '{"identity":"admin@example.com","secret":"changeme"}' \
-            | grep -o '"token":"[^"]*"' | sed 's/"token":"//;s/"//')
+            -d '{"identity":"admin@example.com","secret":"changeme"}' 2>/dev/null || true)
+        NPM_TOKEN=$(echo "$NPM_RESPONSE" | grep -o '"token":"[^"]*"' | sed 's/"token":"//;s/"//g' || true)
 
         if [ -n "$NPM_TOKEN" ]; then
             info "NPM API authenticated"
@@ -618,7 +618,7 @@ if [ "$MODE" = "prod" ]; then
             NPM_CONFIGURED=0
             for i in $(seq 0 $((BIP_COUNT - 1))); do
                 idx=$(printf '%02d' $i)
-                RESULT=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:81/api/nginx/proxy-hosts \
+                RESULT=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:81/api/nginx/proxy-hosts \
                     -H "Content-Type: application/json" \
                     -H "Authorization: Bearer $NPM_TOKEN" \
                     -d "{
@@ -631,7 +631,7 @@ if [ "$MODE" = "prod" ]; then
                         \"ssl_forced\": false,
                         \"http2_support\": false,
                         \"meta\": {\"dns_challenge\": false}
-                    }")
+                    }" 2>/dev/null || echo "000")
                 if [ "$RESULT" = "201" ]; then
                     NPM_CONFIGURED=$((NPM_CONFIGURED + 1))
                 else
