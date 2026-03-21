@@ -668,7 +668,31 @@ else
         echo -e "  bip-${idx}:  ${GREEN}https://bip-${idx}.${BASE_DOMAIN}${NC}"
     done
     echo ""
-    echo -e "  ${YELLOW}Add SSL certificates in NPM for each host to enable HTTPS${NC}"
+    echo -e "${BOLD}To set up proxy hosts in Nginx Proxy Manager:${NC}"
+    echo ""
+    echo "  1. Open http://localhost:81 in your browser"
+    echo "  2. Log in with: admin@example.com / changeme"
+    echo "     (you will be asked to change the password on first login)"
+    echo "  3. Go to: Hosts → Proxy Hosts → Add Proxy Host"
+    echo "  4. For each instance, create a proxy host:"
+    echo ""
+    for i in $(seq 0 $((BIP_COUNT - 1))); do
+        idx=$(printf '%02d' $i)
+        echo -e "     ${BOLD}bip-${idx}:${NC}"
+        echo "       Domain Name:    bip-${idx}.${BASE_DOMAIN}"
+        echo "       Forward Host:   bip-${idx}"
+        echo "       Forward Port:   1880"
+        echo "       ✓ Websockets Support (required for Node-RED)"
+        echo ""
+    done
+    echo "  5. To enable HTTPS, go to the SSL tab in each proxy host:"
+    echo "     → Request a new SSL Certificate"
+    echo "     → Select \"Let's Encrypt\""
+    echo "     → Enter email: ${LETSENCRYPT_EMAIL}"
+    echo "     → ✓ Force SSL"
+    echo "     → Save"
+    echo ""
+    echo -e "  ${YELLOW}Make sure DNS records point to this server before requesting SSL.${NC}"
 fi
 
 echo ""
